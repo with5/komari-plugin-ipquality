@@ -1,0 +1,59 @@
+{
+  "name": { "zh_CN": "IP 质量检测", "zh-CN": "IP 质量检测", "en": "IP Quality Check" },
+  "short": "ip-quality",
+  "description": {
+    "zh_CN": "通过 Komari Agent 在各节点运行 IPQuality 脚本，收集 IP 类型、风险评分、风险因子、黑名单与邮局端口结果，并以快照接口提供给主题和页面。",
+    "zh-CN": "通过 Komari Agent 在各节点运行 IPQuality 脚本，收集 IP 类型、风险评分、风险因子、黑名单与邮局端口结果，并以快照接口提供给主题和页面。",
+    "en": "Runs the IPQuality script on each node through the Komari agent and serves IP type, risk scores, risk factors, blacklist and mail-port results as a snapshot API for themes and pages."
+  },
+  "author": "with5",
+  "version": "26.1026.1",
+  "url": "https://github.com/with5/komari-plugin-ipquality",
+  "komari": ">=1.0.5",
+  "entry": "script.js",
+  "permissions": {
+    "node": true,
+    "allowRoutes": true,
+    "allowSystemRPC": true,
+    "allowHTMLInject": false,
+    "timeout": 30,
+    "maxHTTPBodyBytes": 65536
+  },
+  "configuration": {
+    "type": "managed",
+    "name": { "zh_CN": "IP 质量检测配置", "zh-CN": "IP 质量检测配置", "en": "IP Quality Check settings" },
+    "data": [
+      {
+        "key": "ip_mode",
+        "type": "select",
+        "options": "0,4,6",
+        "default": "0",
+        "name": { "zh_CN": "检测的 IP 协议（0=双栈，4=仅 IPv4，6=仅 IPv6）", "zh-CN": "检测的 IP 协议（0=双栈，4=仅 IPv4，6=仅 IPv6）", "en": "IP stacks (0 = both, 4 = IPv4 only, 6 = IPv6 only)" }
+      },
+      {
+        "key": "cron_spec",
+        "type": "string",
+        "default": "0 4 * * *",
+        "name": { "zh_CN": "定时检测 Cron（默认每天 04:00）", "zh-CN": "定时检测 Cron（默认每天 04:00）", "en": "Schedule (cron, default daily at 04:00)" }
+      },
+      {
+        "key": "max_nodes",
+        "type": "number",
+        "default": 3,
+        "name": { "zh_CN": "每次最多检测的节点数（脚本较重，建议不要太大）", "zh-CN": "每次最多检测的节点数（脚本较重，建议不要太大）", "en": "Max nodes per run (the script is heavy, keep it small)" }
+      },
+      {
+        "key": "install_deps",
+        "type": "switch",
+        "default": false,
+        "name": { "zh_CN": "允许脚本在节点上自动安装依赖（jq、dig、bc 等，需要 root）", "zh-CN": "允许脚本在节点上自动安装依赖（jq、dig、bc 等，需要 root）", "en": "Let the script install missing dependencies on the node (jq, dig, bc ...; needs root)" }
+      },
+      {
+        "key": "target_nodes",
+        "type": "string",
+        "default": "",
+        "name": { "zh_CN": "限定检测的节点 UUID（JSON 数组，留空为全部在线节点）", "zh-CN": "限定检测的节点 UUID（JSON 数组，留空为全部在线节点）", "en": "Only these node UUIDs (JSON array; empty = all online nodes)" }
+      }
+    ]
+  }
+}

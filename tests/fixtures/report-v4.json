@@ -1,0 +1,85 @@
+{
+  "Head": {
+    "IP": "36.235.*.*",
+    "Time": "2026-01-15 09:31:25 UTC",
+    "Version": "v2026-01-15"
+  },
+  "Info": {
+    "ASN": "3462",
+    "Organization": "Data Communication Business Group",
+    "Region": {
+      "Code": "TW",
+      "Name": "Taiwan"
+    },
+    "RegisteredRegion": {
+      "Code": "TW",
+      "Name": "Taiwan"
+    },
+    "City": {
+      "Name": "Chang-hua"
+    },
+    "TimeZone": "Asia/Taipei",
+    "Type": "Geo-consistent"
+  },
+  "Type": {
+    "Usage": {
+      "IPinfo": "ISP",
+      "AbuseIPDB": "Line ISP",
+      "ipapi": "null"
+    }
+  },
+  "Score": {
+    "IP2LOCATION": "0",
+    "ipapi": "0.47%",
+    "IPQS": "null",
+    "AbuseIPDB": "12"
+  },
+  "Factor": {
+    "Proxy": {
+      "IPinfo": false,
+      "ipapi": false,
+      "DBIP": null
+    },
+    "VPN": {
+      "IPinfo": true,
+      "ipapi": false,
+      "DBIP": null
+    },
+    "Tor": {
+      "IPinfo": false,
+      "ipapi": false,
+      "DBIP": null
+    },
+    "Server": {
+      "IPinfo": false,
+      "ipapi": false,
+      "DBIP": null
+    },
+    "Abuser": {
+      "IPinfo": false,
+      "ipapi": false,
+      "DBIP": null
+    },
+    "Robot": {
+      "IPinfo": false,
+      "ipapi": false,
+      "DBIP": null
+    }
+  },
+  "Media": {
+    "Netflix": {
+      "Status": "Yes"
+    }
+  },
+  "Mail": {
+    "Port25": true,
+    "Gmail": true,
+    "QQ": false,
+    "DNSBlacklist": {
+      "Total": 439,
+      "Clean": 411,
+      "Marked": 28,
+      "Blacklisted": 0
+    }
+  }
+}

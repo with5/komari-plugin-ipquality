@@ -11,7 +11,7 @@
     "en": "Runs the IPQuality script on each node through the Komari agent and serves IP type, risk scores, risk factors, blacklist and mail-port results as a snapshot API for themes and pages."
   },
   "author": "with5",
-  "version": "26.1026.2",
+  "version": "26.1026.3",
   "url": "https://github.com/with5/komari-plugin-ipquality",
   "komari": ">=1.0.5",
   "entry": "script.js",

@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "updated_at": "2026-10-26T09:59:44.000Z",
+  "plugins": [
+    {
+      "name": {
+        "zh_CN": "IP 质量检测",
+        "en": "IP Quality Check"
+      },
+      "short": "ip-quality",
+      "description": {
+        "zh_CN": "通过 Komari Agent 在各节点运行 IPQuality 脚本，收集 IP 类型、风险评分、风险因子、黑名单与邮局端口结果，并以快照接口提供给主题和页面。",
+        "en": "Runs the IPQuality script on each node through the Komari agent and serves IP type, risk scores, risk factors, blacklist and mail-port results as a snapshot API for themes and pages."
+      },
+      "version": "26.1026.3",
+      "author": "with5",
+      "komari": ">=1.0.5",
+      "url": "https://github.com/with5/komari-plugin-ipquality",
+      "download": "https://github.com/with5/komari-plugin-ipquality/releases/download/v26.1026.3/ip-quality.zip",
+      "sha256": "3784dfe64c17bb054b6e0de93c3f0a9349d6f21e08c4e8f5e44ee9fe0d0a87ba"
+    }
+  ]
+}

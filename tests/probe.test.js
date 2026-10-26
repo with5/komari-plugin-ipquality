@@ -8,7 +8,7 @@ const report = fs.readFileSync(path.join(__dirname, "fixtures", "report-v4.json"
 
 test("config defaults are conservative", () => {
   const c = normalizeConfig({});
-  assert.deepEqual(c, { ipMode: "0", cronSpec: "0 4 * * *", installDeps: false, targetNodes: [], maxNodes: 3 });
+  assert.deepEqual(c, { ipMode: "0", cronSpec: "0 4 * * *", installDeps: false, targetNodes: [], maxNodes: 3, autoProbeMissing: true });
   assert.equal(normalizeConfig({ ip_mode: "9" }).ipMode, "0");
   assert.equal(normalizeConfig({ max_nodes: 999 }).maxNodes, 20);
   assert.deepEqual(normalizeConfig({ target_nodes: '["a","b"]' }).targetNodes, ["a", "b"]);
@@ -30,7 +30,7 @@ test("run ids are validated before they reach the shell", () => {
 });
 
 // Every dispatched node answers with the same report; "h" is a hidden node.
-function fakeServer(online = true) {
+function fakeServer(online = true, extra = []) {
   const calls = [];
   let sent = [];
   return {
@@ -39,8 +39,8 @@ function fakeServer(online = true) {
     cron: () => {},
     call: async (m, p) => {
       calls.push([m, p]);
-      if (m === "admin:listClients") return [{ uuid: "a", name: "A" }, { uuid: "h", name: "H", hidden: true }];
-      if (m === "common:getNodesLatestStatus") return { a: { online }, h: { online } };
+      if (m === "admin:listClients") return [{ uuid: "a", name: "A" }, { uuid: "h", name: "H", hidden: true }, ...extra.map((u) => ({ uuid: u, name: u }))];
+      if (m === "common:getNodesLatestStatus") return Object.fromEntries(["a", "h", ...extra].map((u) => [u, { online }]));
       if (m === "admin:exec") { sent = p.clients; return { task_id: "t1" }; }
       if (m === "admin:getTaskById") return { results: sent.map((client) => ({ client, finished_at: "now", exit_code: 0, result: "===IPQ4===\n" + report + "\n===IPQ6===\nexit 1\n" })) };
     },
@@ -87,4 +87,72 @@ test("no online nodes means nothing is dispatched", async () => {
   assert.deepEqual(await m.trigger({}), { triggered: false, reason: "no_online_nodes" });
   assert.equal(srv.calls.some((c) => c[0] === "admin:exec"), false);
   m.shutdown();
+});
+
+const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+const tmp = () => process.chdir(fs.mkdtempSync(path.join(require("node:os").tmpdir(), "ipq-")));
+
+test("a run covers every online node, a few at a time", async () => {
+  tmp();
+  const srv = fakeServer(true, ["c", "d", "e"]); // a h c d e = 5 nodes, batches of 3 + 2
+  srv.getConfig = async () => ({ max_nodes: 3 });
+  const m = createProbeManager(srv, { pollMs: 5 });
+  const r = await m.trigger({});
+  assert.equal(r.nodes, 5);
+  assert.equal(r.batches, 2);
+  await wait(250);
+  const execs = srv.calls.filter((c) => c[0] === "admin:exec");
+  assert.deepEqual(execs.map((c) => c[1].clients.length), [3, 2]);
+  const v = m.view(true);
+  assert.equal(v.running, false);
+  assert.deepEqual(Object.keys(v.nodes).sort(), ["a", "c", "d", "e", "h"]);
+  assert.equal(v.lastTask.finished, 5);
+  m.shutdown();
+});
+
+test("nodes without a result go first, then the oldest", async () => {
+  tmp();
+  const srv = fakeServer(true, ["c"]);
+  srv.getConfig = async () => ({ max_nodes: 1 });
+  const m = createProbeManager(srv, { pollMs: 5 });
+  const snap = m.loadSnapshotFromDisk();
+  snap.nodes.a = { updatedAt: "2026-10-26T00:00:00Z", ipv4: null, ipv6: null };
+  snap.nodes.h = { updatedAt: "2026-10-01T00:00:00Z", ipv4: null, ipv6: null };
+  await m.trigger({});
+  await wait(250);
+  const order = srv.calls.filter((c) => c[0] === "admin:exec").map((c) => c[1].clients[0]);
+  assert.deepEqual(order, ["c", "h", "a"]);
+  m.shutdown();
+});
+
+test("start-up checks online nodes that have no result, once", async () => {
+  tmp();
+  const srv = fakeServer(true, ["c"]);
+  const m = createProbeManager(srv, { pollMs: 5 });
+  const snap = m.loadSnapshotFromDisk();
+  snap.nodes.a = { updatedAt: "2026-10-26T00:00:00Z", ipv4: null, ipv6: null };
+  await m.start();
+  await wait(250);
+  const sentTo = srv.calls.filter((c) => c[0] === "admin:exec").flatMap((c) => c[1].clients).sort();
+  assert.deepEqual(sentTo, ["c", "h"]);
+  m.shutdown();
+});
+
+test("start-up check can be switched off and skips nodes that just failed", async () => {
+  tmp();
+  const srv = fakeServer(true, []);
+  srv.getConfig = async () => ({ auto_probe_missing: false });
+  const m = createProbeManager(srv, { pollMs: 5 });
+  await m.start();
+  assert.equal(srv.calls.some((c) => c[0] === "admin:exec"), false);
+  m.shutdown();
+  tmp();
+  const srv2 = fakeServer(true, []);
+  const m2 = createProbeManager(srv2, { pollMs: 5 });
+  const s2 = m2.loadSnapshotFromDisk();
+  s2.nodes.a = { error: "x", attemptedAt: new Date().toISOString() };
+  s2.nodes.h = { error: "x", attemptedAt: new Date().toISOString() };
+  await m2.start();
+  assert.equal(srv2.calls.some((c) => c[0] === "admin:exec"), false);
+  m2.shutdown();
 });

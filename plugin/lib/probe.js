@@ -10,7 +10,8 @@ const parser = require("./parser.js");
 const SNAPSHOT_FILE = "snapshot.json";
 const POLL_MS = 4000;
 const NODE_TIMEOUT_S = 280;           // per stack, on the node
-const TASK_TIMEOUT_MS = 12 * 60000;   // whole task, as seen by the plugin
+const TASK_TIMEOUT_MS = 12 * 60000;   // one batch, as seen by the plugin
+const RETRY_MS = 6 * 3600e3;          // a node that just failed is not retried by the start-up check
 
 const snapshotPath = () => path.join(typeof __storageDir__ === "string" && __storageDir__ ? __storageDir__ : ".", SNAPSHOT_FILE);
 const errText = (e) => (e && e.message ? e.message : String(e));
@@ -28,8 +29,9 @@ function normalizeConfig(raw) {
     cronSpec: String(cfg.cron_spec || "0 4 * * *").trim() || "0 4 * * *",
     installDeps: cfg.install_deps === true || cfg.install_deps === "true",
     targetNodes: targets,
-    // one node at a time by default: the script is heavy (hundreds of DNS and HTTPS queries)
+    // nodes checked at the same time; a run walks through all nodes in batches of this size
     maxNodes: Math.max(1, Math.min(20, Math.floor(Number(cfg.max_nodes) || 3))),
+    autoProbeMissing: cfg.auto_probe_missing !== false && cfg.auto_probe_missing !== "false",
   };
 }
 
@@ -123,21 +125,68 @@ function createProbeManager(server, opts) {
   const isCurrent = (task) => !unloaded && load().activeTask === task;
   const pending = (task) => task.clients.filter(function (u) { return !task.done[u]; });
 
-  function finish(task, error) {
-    if (!isCurrent(task)) return;
+  // Nodes that never produced a result first, then the one checked longest ago.
+  function byPriority(uuids) {
+    const nodes = load().nodes;
+    const at = function (u) { const n = nodes[u]; return n && n.updatedAt ? Date.parse(n.updatedAt) : 0; };
+    return uuids.slice().sort(function (x, y) { return at(x) - at(y); });
+  }
+
+  function failPending(task, error) {
     const snap = load(), now = new Date().toISOString();
     pending(task).forEach(function (u) {
       const old = snap.nodes[u] || {};
       snap.nodes[u] = Object.assign({}, old, { error: error || "Agent returned no result", attemptedAt: now });
+      task.done[u] = true;
+      task.failed = (task.failed || 0) + 1;
     });
+  }
+
+  function finish(task, error) {
+    if (!isCurrent(task)) return;
+    const snap = load(), now = new Date().toISOString();
+    failPending(task, error);
+    task.finished = Math.min(task.total, (task.finished || 0) + task.clients.length);
     task.finishedAt = now;
-    task.error = error || null;
+    task.error = error || (task.failed ? task.failed + " node(s) failed" : null);
     snap.lastTask = task;
     snap.activeTask = null;
     snap.updatedAt = now;
-    snap.lastError = error || null;
+    snap.lastError = task.error;
     stopPoll();
     save(snap);
+  }
+
+  // Sends the next batch of the queue to the agents; the queue is walked a few nodes at a time
+  // so a small VPS never runs several heavy checks and the whole fleet still gets covered.
+  async function dispatchBatch(task) {
+    const batch = task.queue.splice(0, task.batchSize);
+    const runId = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
+    const resp = await server.call("admin:exec", { command: buildRemoteCommand(task.cfg, runId), clients: batch });
+    const taskId = resp && resp.task_id ? String(resp.task_id) : "";
+    if (!taskId) throw new Error("admin:exec returned no task_id");
+    task.taskId = taskId;
+    task.runId = runId;
+    task.clients = batch;
+    task.done = {};
+    task.deadlineAt = new Date(Date.now() + TASK_TIMEOUT_MS).toISOString();
+  }
+
+  // The current batch is over (answered or timed out): start the next one or end the run.
+  async function nextBatch(task, error) {
+    if (!isCurrent(task)) return;
+    failPending(task, error);
+    task.finished = (task.finished || 0) + task.clients.length;
+    if (!task.queue.length) { task.finished = task.total; return finish(task, null); }
+    try {
+      await dispatchBatch(task);
+      if (!isCurrent(task)) return;
+      save(load());
+      poll(task);
+    } catch (e) {
+      task.clients = []; task.done = {};
+      finish(task, errText(e));
+    }
   }
 
   function apply(task, res) {
@@ -172,13 +221,14 @@ function createProbeManager(server, opts) {
         task.pollError = null;
       } catch (e) { task.pollError = errText(e); }
       if (!isCurrent(task)) return;
-      if (!pending(task).length) return finish(task, task.failed ? task.failed + " node(s) failed" : null);
-      if (Date.now() >= Date.parse(task.deadlineAt)) return finish(task, "Timed out waiting for the agents");
+      if (!pending(task).length) return nextBatch(task, null);
+      if (Date.now() >= Date.parse(task.deadlineAt)) return nextBatch(task, "Timed out waiting for the agent");
       save(load());
       poll(task);
     }, pollMs);
   }
 
+  // Starts a run over the given nodes, or over every eligible online node.
   async function trigger(opts) {
     if (unloaded) return { triggered: false, reason: "unloaded" };
     if (dispatching) return { triggered: false, reason: "already_running" };
@@ -187,19 +237,16 @@ function createProbeManager(server, opts) {
       const snap = load();
       if (snap.activeTask) return { triggered: false, reason: "already_running" };
       const cfg = normalizeConfig(await server.getConfig());
-      let uuids = await targets(cfg, opts && opts.clients);
+      const asked = opts && opts.clients;
+      const uuids = Array.isArray(asked) ? await targets(cfg, asked) : byPriority(await targets(cfg));
       if (!uuids.length) return { triggered: false, reason: "no_online_nodes" };
-      uuids = uuids.slice(0, cfg.maxNodes);
-      const runId = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
-      const resp = await server.call("admin:exec", { command: buildRemoteCommand(cfg, runId), clients: uuids });
-      const taskId = resp && resp.task_id ? String(resp.task_id) : "";
-      if (!taskId) throw new Error("admin:exec returned no task_id");
-      const now = new Date().toISOString();
-      const task = { taskId: taskId, runId: runId, startedAt: now, deadlineAt: new Date(Date.now() + TASK_TIMEOUT_MS).toISOString(), clients: uuids, done: {}, failed: 0, reason: (opts && opts.reason) || "" };
+      const task = { startedAt: new Date().toISOString(), reason: (opts && opts.reason) || "", cfg: { ipMode: cfg.ipMode, installDeps: cfg.installDeps }, batchSize: cfg.maxNodes,
+        queue: uuids.slice(), total: uuids.length, finished: 0, failed: 0, clients: [], done: {} };
+      await dispatchBatch(task);
       snap.activeTask = task;
       save(snap);
       poll(task);
-      return { triggered: true, taskId: taskId, nodes: uuids.length };
+      return { triggered: true, taskId: task.taskId, nodes: uuids.length, batches: Math.ceil(uuids.length / cfg.maxNodes) };
     } catch (e) {
       return { triggered: false, reason: "error", message: errText(e) };
     } finally {
@@ -207,7 +254,18 @@ function createProbeManager(server, opts) {
     }
   }
 
-  // Registers the cron once and resumes a task that was running when the plugin reloaded.
+  // Online nodes with no result yet (and not just tried): they get checked on start-up.
+  async function missingNodes(cfg) {
+    const nodes = load().nodes, now = Date.now();
+    const online = await targets(cfg);
+    return online.filter(function (u) {
+      const n = nodes[u];
+      if (n && n.updatedAt) return false;
+      return !(n && n.attemptedAt && now - Date.parse(n.attemptedAt) < RETRY_MS);
+    });
+  }
+
+  // Registers the cron once, resumes a run that was in progress, and fills in nodes without a result.
   async function start() {
     const cfg = normalizeConfig(await server.getConfig());
     await refreshMeta().catch(function () {});
@@ -219,8 +277,13 @@ function createProbeManager(server, opts) {
     }
     const t = load().activeTask;
     if (t) {
-      if (Date.now() >= Date.parse(t.deadlineAt)) finish(t, "Interrupted by a plugin restart");
+      if (Date.now() >= Date.parse(t.deadlineAt)) await nextBatch(t, "Interrupted by a plugin restart");
       else poll(t);
+      return;
+    }
+    if (cfg.autoProbeMissing) {
+      const list = await missingNodes(cfg).catch(function () { return []; });
+      if (list.length) await trigger({ clients: byPriority(list), reason: "auto" });
     }
   }
 
@@ -234,7 +297,8 @@ function createProbeManager(server, opts) {
       nodes[u] = isAdmin ? n : { ipv4: n.ipv4 || null, ipv6: n.ipv6 || null, updatedAt: n.updatedAt || null };
     });
     const t = snap.activeTask;
-    return { updatedAt: snap.updatedAt, running: Boolean(t), nodes: nodes, lastError: isAdmin ? snap.lastError : null, activeTask: isAdmin ? t : null, lastTask: isAdmin ? snap.lastTask : null };
+    const progress = t ? { done: Math.min(t.total, (t.finished || 0) + Object.keys(t.done || {}).length), total: t.total } : null;
+    return { updatedAt: snap.updatedAt, running: Boolean(t), progress: progress, nodes: nodes, lastError: isAdmin ? snap.lastError : null, activeTask: isAdmin ? t : null, lastTask: isAdmin ? snap.lastTask : null };
   }
 
   function cancel() {

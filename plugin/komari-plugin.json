@@ -57,9 +57,19 @@
         "type": "number",
         "default": 3,
         "name": {
-          "zh_CN": "每次最多检测的节点数（脚本较重，建议不要太大）",
-          "zh-CN": "每次最多检测的节点数（脚本较重，建议不要太大）",
-          "en": "Max nodes per run (the script is heavy, keep it small)"
+          "zh_CN": "同时检测的节点数（一次检测会分批覆盖全部节点，脚本较重，建议保持较小）",
+          "zh-CN": "同时检测的节点数（一次检测会分批覆盖全部节点，脚本较重，建议保持较小）",
+          "en": "Nodes checked at the same time (a run covers all nodes in batches; the script is heavy, keep it small)"
+        }
+      },
+      {
+        "key": "auto_probe_missing",
+        "type": "switch",
+        "default": true,
+        "name": {
+          "zh_CN": "插件启动时自动检测还没有结果的在线节点",
+          "zh-CN": "插件启动时自动检测还没有结果的在线节点",
+          "en": "On start-up, check online nodes that have no result yet"
         }
       },
       {
